@@ -68,7 +68,7 @@ export function HistoryClientView({
   };
 
   return (
-    <div className="min-h-screen bg-cream-100 max-w-2xl mx-auto border-x border-cream-300 p-4 sm:p-6 pb-20">
+    <div className="min-h-screen bg-cream-100 w-full max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-20">
       {/* Header */}
       <div className="flex items-center justify-between pb-4 border-b border-cream-300">
         <Link

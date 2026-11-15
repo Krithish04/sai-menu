@@ -1,26 +1,23 @@
 "use client";
 
-import React, { useState, useRef, useCallback } from "react";
-import { MenuData, Section, Item } from "@/data/menu";
-import { CategoryPanel } from "./CategoryPanel";
+import React, { useState, useRef, useCallback, useEffect } from "react";
+import { MenuData, Section, Item } from "@/types/menu";
 import { SaveStatus, SaveState } from "./SaveStatus";
-import { QrManagerModal } from "./QrManagerModal";
 import { MenuQrCard } from "./MenuQrCard";
 import { ExcelImportModal } from "./ExcelImportModal";
+import { AdminSidebar } from "./AdminSidebar";
+import { AdminDashboardOverview } from "./AdminDashboardOverview";
+import { AdminItemsTable } from "./AdminItemsTable";
+import { AdminCategoriesView } from "./AdminCategoriesView";
+import { AdminBulkPriceView } from "./AdminBulkPriceView";
+import { AdminBackupExcelView } from "./AdminBackupExcelView";
+import { AdminItemDrawer } from "./AdminItemDrawer";
 import {
   ExternalLink,
-  LogOut,
   Utensils,
-  History,
-  Plus,
-  Layers,
-  Download,
-  Upload,
-  RotateCcw,
+  Search,
   AlertTriangle,
-  QrCode,
-  Printer,
-  FileSpreadsheet,
+  RotateCcw,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -33,15 +30,18 @@ export function AdminDashboard({ initialMenu }: AdminDashboardProps) {
   const router = useRouter();
   const [menu, setMenu] = useState<MenuData>(initialMenu);
   const [saveStatus, setSaveStatus] = useState<SaveState>("idle");
-  const [isAddingCategory, setIsAddingCategory] = useState(false);
-  const [newCatEn, setNewCatEn] = useState("");
-  const [newCatGu, setNewCatGu] = useState("");
+  const [activeTab, setActiveTab] = useState<string>("overview");
+  const [searchQuery, setSearchQuery] = useState<string>("");
 
+  // Item Drawer state
+  const [isItemDrawerOpen, setIsItemDrawerOpen] = useState(false);
+  const [drawerCategory, setDrawerCategory] = useState<Section>(menu.sections[0]);
+  const [drawerItem, setDrawerItem] = useState<Item | null>(null);
+
+  // Reset to original state
   const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
   const [resetConfirmCode, setResetConfirmCode] = useState("");
   const [isResetting, setIsResetting] = useState(false);
-  const [isQrModalOpen, setIsQrModalOpen] = useState(false);
-  const [quickPrintTable, setQuickPrintTable] = useState(1);
 
   // Excel Import states
   const [isExcelUploading, setIsExcelUploading] = useState(false);
@@ -51,9 +51,44 @@ export function AdminDashboard({ initialMenu }: AdminDashboardProps) {
   const [excelSummary, setExcelSummary] = useState<any>(null);
   const [excelParsedMenu, setExcelParsedMenu] = useState<MenuData | null>(null);
   const excelFileInputRef = useRef<HTMLInputElement>(null);
+
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const latestMenuRef = useRef<MenuData>(initialMenu);
   latestMenuRef.current = menu;
+
+  // Sync with URL hash
+  useEffect(() => {
+    const handleHash = () => {
+      const hash = window.location.hash.replace(/^#/, "");
+      if (
+        hash === "items" ||
+        hash === "categories" ||
+        hash === "bulk-price" ||
+        hash === "qr" ||
+        hash === "backup" ||
+        hash === "history" ||
+        hash === "overview"
+      ) {
+        setActiveTab(hash);
+      } else if (hash === "menu-qr-card") {
+        setActiveTab("qr");
+      }
+    };
+    handleHash();
+    window.addEventListener("hashchange", handleHash);
+    return () => window.removeEventListener("hashchange", handleHash);
+  }, []);
+
+  const handleSelectTab = (tab: string) => {
+    setActiveTab(tab);
+    if (tab === "history") {
+      router.push("/admin/history");
+      return;
+    }
+    if (typeof window !== "undefined") {
+      window.history.pushState(null, "", `#${tab}`);
+    }
+  };
 
   const persistMenu = useCallback(async (menuToSave: MenuData, summary?: string) => {
     setSaveStatus("saving");
@@ -94,6 +129,7 @@ export function AdminDashboard({ initialMenu }: AdminDashboardProps) {
     [persistMenu]
   );
 
+  // Category update handler
   const handleUpdateCategory = (updatedCat: Section) => {
     const updatedSections = menu.sections.map((sec) =>
       sec.id === updatedCat.id ? updatedCat : sec
@@ -124,25 +160,22 @@ export function AdminDashboard({ initialMenu }: AdminDashboardProps) {
 
   const handleDeleteCategory = (categoryId: string) => {
     const target = menu.sections.find((s) => s.id === categoryId);
+    if (!confirm(`Are you sure you want to delete category "${target?.en || categoryId}"?`)) {
+      return;
+    }
     const updatedSections = menu.sections.filter((s) => s.id !== categoryId);
     const newMenu = { ...menu, sections: updatedSections };
     triggerAutoSave(newMenu, `Deleted category "${target?.en || categoryId}"`);
   };
 
-  const handleCreateCategory = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newCatEn.trim()) return;
-
-    const baseSlug = newCatEn
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-");
+  const handleCreateCategory = (en: string, gu: string) => {
+    const baseSlug = en.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-");
     const newId = `${baseSlug}-${Date.now().toString(36)}`;
 
     const newCategory: Section = {
       id: newId,
-      en: newCatEn.trim(),
-      gu: newCatGu.trim(),
+      en: en.trim(),
+      gu: gu.trim(),
       columns: ["price"],
       items: [],
     };
@@ -153,45 +186,129 @@ export function AdminDashboard({ initialMenu }: AdminDashboardProps) {
     };
 
     triggerAutoSave(newMenu, `Added category "${newCategory.en}"`);
-    setNewCatEn("");
-    setNewCatGu("");
-    setIsAddingCategory(false);
   };
 
-  const handleMoveItemToCategory = (
-    item: Item,
-    sourceCatId: string,
-    targetCatId: string
-  ) => {
-    if (sourceCatId === targetCatId) return;
+  // Item handlers
+  const handleUpdateItem = (catId: string, updatedItem: Item) => {
+    const updatedSections = menu.sections.map((sec) => {
+      if (sec.id !== catId) return sec;
+      return {
+        ...sec,
+        items: sec.items.map((it) => (it.id === updatedItem.id ? updatedItem : it)),
+      };
+    });
+    const newMenu = { ...menu, sections: updatedSections };
+    triggerAutoSave(newMenu, `Updated item "${updatedItem.en}"`);
+  };
 
-    const sourceCat = menu.sections.find((s) => s.id === sourceCatId);
-    const targetCat = menu.sections.find((s) => s.id === targetCatId);
-    if (!sourceCat || !targetCat) return;
+  const handleDeleteItem = (catId: string, itemId: string) => {
+    const cat = menu.sections.find((s) => s.id === catId);
+    const item = cat?.items.find((it) => it.id === itemId);
+    if (!confirm(`Delete item "${item?.en || itemId}"?`)) return;
 
     const updatedSections = menu.sections.map((sec) => {
-      if (sec.id === sourceCatId) {
-        return {
-          ...sec,
-          items: sec.items.filter((i) => i.id !== item.id),
-        };
-      }
-      if (sec.id === targetCatId) {
-        return {
-          ...sec,
-          items: [...sec.items, item],
-        };
-      }
-      return sec;
+      if (sec.id !== catId) return sec;
+      return {
+        ...sec,
+        items: sec.items.filter((it) => it.id !== itemId),
+      };
     });
-
     const newMenu = { ...menu, sections: updatedSections };
-    triggerAutoSave(
-      newMenu,
-      `Moved "${item.en}" from ${sourceCat.en} to ${targetCat.en}`
-    );
+    triggerAutoSave(newMenu, `Deleted "${item?.en || itemId}"`);
   };
 
+  const handleMoveItem = (catId: string, itemIdx: number, direction: "up" | "down") => {
+    const cat = menu.sections.find((s) => s.id === catId);
+    if (!cat) return;
+
+    const targetIdx = direction === "up" ? itemIdx - 1 : itemIdx + 1;
+    if (targetIdx < 0 || targetIdx >= cat.items.length) return;
+
+    const newItems = [...cat.items];
+    const temp = newItems[itemIdx];
+    newItems[itemIdx] = newItems[targetIdx];
+    newItems[targetIdx] = temp;
+
+    const updatedSections = menu.sections.map((s) =>
+      s.id === catId ? { ...s, items: newItems } : s
+    );
+    const newMenu = { ...menu, sections: updatedSections };
+    triggerAutoSave(newMenu, `Reordered "${temp.en}"`);
+  };
+
+  const handleOpenItemDrawer = (cat: Section, item?: Item | null) => {
+    setDrawerCategory(cat);
+    setDrawerItem(item || null);
+    setIsItemDrawerOpen(true);
+  };
+
+  const handleSaveItemDrawer = (savedItem: Item, targetCategoryId: string) => {
+    let updatedSections = [...menu.sections];
+
+    if (drawerItem) {
+      // Editing existing item
+      if (drawerCategory.id === targetCategoryId) {
+        // Same category
+        updatedSections = updatedSections.map((sec) =>
+          sec.id === targetCategoryId
+            ? {
+                ...sec,
+                items: sec.items.map((it) =>
+                  it.id === savedItem.id ? savedItem : it
+                ),
+              }
+            : sec
+        );
+      } else {
+        // Moved to a different category
+        updatedSections = updatedSections.map((sec) => {
+          if (sec.id === drawerCategory.id) {
+            return {
+              ...sec,
+              items: sec.items.filter((it) => it.id !== savedItem.id),
+            };
+          }
+          if (sec.id === targetCategoryId) {
+            return {
+              ...sec,
+              items: [...sec.items, savedItem],
+            };
+          }
+          return sec;
+        });
+      }
+      triggerAutoSave(
+        { ...menu, sections: updatedSections },
+        `Edited "${savedItem.en}"`
+      );
+    } else {
+      // Adding new item
+      updatedSections = updatedSections.map((sec) =>
+        sec.id === targetCategoryId
+          ? { ...sec, items: [...sec.items, savedItem] }
+          : sec
+      );
+      triggerAutoSave(
+        { ...menu, sections: updatedSections },
+        `Added "${savedItem.en}"`
+      );
+    }
+  };
+
+  // Bulk Price Apply handler
+  const handleApplyBulkPrice = (
+    updatedCategories: Section[],
+    summary: string
+  ) => {
+    const updatedMap = new Map(updatedCategories.map((c) => [c.id, c]));
+    const newSections = menu.sections.map((sec) =>
+      updatedMap.has(sec.id) ? updatedMap.get(sec.id)! : sec
+    );
+    const newMenu = { ...menu, sections: newSections };
+    triggerAutoSave(newMenu, summary);
+  };
+
+  // Excel handlers
   const handleDownloadExcel = () => {
     window.location.href = "/api/admin/excel/export";
   };
@@ -270,222 +387,175 @@ export function AdminDashboard({ initialMenu }: AdminDashboardProps) {
     }
   };
 
+  // Title for main top bar based on active tab
+  const getTabTitle = () => {
+    switch (activeTab) {
+      case "overview":
+        return "Dashboard Overview";
+      case "items":
+        return "Menu Items & Inline Price Editor";
+      case "categories":
+        return "Menu Categories Management";
+      case "bulk-price":
+        return "Bulk Price Adjustments";
+      case "qr":
+        return "Menu QR Code & Print Suite";
+      case "backup":
+        return "Excel Spreadsheet & Backup Tools";
+      default:
+        return "Admin Dashboard";
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-cream-100 max-w-3xl mx-auto border-x border-cream-300 pb-24">
-      {/* Sticky Admin Header */}
-      <header className="sticky top-0 z-40 bg-cream-100/95 backdrop-blur-sm border-b border-cream-300 p-3 sm:p-4 shadow-sm">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <span className="ribbon-tag text-xs font-bold py-1">Admin</span>
-            <div>
-              <h1 className="font-serif text-lg sm:text-xl font-bold text-indigo-deep leading-tight">
-                {menu.restaurant.name}
-              </h1>
-              <p className="text-[11px] text-indigo-muted hidden sm:block">
-                Edit items, prices & categories in real-time
-              </p>
-            </div>
+    <div className="min-h-screen bg-cream-100 flex flex-col lg:flex-row w-full">
+      {/* 1. Left Sidebar (Fixed 240px on lg: >=1024px) */}
+      <AdminSidebar
+        activeTab={activeTab}
+        onSelectTab={handleSelectTab}
+        restaurantName={menu.restaurant.name}
+      />
+
+      {/* 2. Main Content Area (Full width with 24-32px padding, max 1600px) */}
+      <div className="flex-1 min-w-0 flex flex-col">
+        {/* Main Area Sticky Top Bar */}
+        <header className="sticky top-0 z-30 w-full h-14 bg-cream-100 border-b border-cream-300 px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-3 min-w-0">
+            <h1 className="font-serif font-bold text-sm sm:text-base text-indigo-deep truncate">
+              {getTabTitle()}
+            </h1>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5 shrink-0">
+            {/* Live Search Box (Visible when on items tab or global) */}
+            <div className="relative hidden sm:flex items-center">
+              <Search className="absolute left-2.5 w-3.5 h-3.5 text-indigo-muted pointer-events-none" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  if (activeTab !== "items" && e.target.value.trim()) {
+                    setActiveTab("items");
+                  }
+                }}
+                placeholder="Search dishes..."
+                className="w-48 lg:w-64 min-h-[36px] pl-8 pr-3 py-1 text-xs bg-cream-50 border border-cream-300 rounded-full text-indigo focus:outline-none focus:ring-2 focus:ring-ribbon"
+              />
+            </div>
+
+            {/* Save Status Badge */}
             <SaveStatus
               status={saveStatus}
               onRetry={() => persistMenu(latestMenuRef.current, "Retry save")}
             />
 
-            {/* Menu QR Code Navigation Link */}
-            <a
-              href="#menu-qr-card"
-              className="inline-flex items-center gap-1.5 min-h-[38px] px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded bg-cream-200 border border-cream-300 text-indigo hover:bg-cream-300 transition-colors shadow-xs"
-              title="Jump to Menu QR Code & Print Suite"
-            >
-              <QrCode className="w-3.5 h-3.5 text-ribbon" />
-              <span className="hidden sm:inline">Menu QR</span>
-            </a>
-
-            {/* Live Menu Button */}
+            {/* Live Menu Link */}
             <Link
               href="/"
               target="_blank"
-              className="inline-flex items-center gap-1.5 min-h-[38px] px-3 py-1.5 text-xs font-semibold rounded bg-cream-200 border border-cream-300 text-indigo hover:bg-cream-300 transition-colors"
+              className="inline-flex items-center gap-1.5 min-h-[36px] px-3 py-1 text-xs font-semibold rounded bg-cream-200 hover:bg-cream-300 border border-cream-300 text-indigo transition-colors"
             >
               <Utensils className="w-3.5 h-3.5 text-ribbon" />
-              <span className="hidden sm:inline">Live Menu</span>
+              <span className="hidden md:inline">Live Menu</span>
               <ExternalLink className="w-3 h-3 opacity-60" />
             </Link>
-
-            {/* History link */}
-            <Link
-              href="/admin/history"
-              className="inline-flex items-center gap-1.5 min-h-[38px] px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded bg-cream-200 border border-cream-300 text-indigo hover:bg-cream-300 transition-colors"
-              title="Change History"
-            >
-              <History className="w-3.5 h-3.5 text-indigo-muted" />
-              <span className="hidden md:inline">History</span>
-            </Link>
-
-            {/* Logout */}
-            <form action="/api/admin/logout" method="POST">
-              <button
-                type="submit"
-                className="inline-flex items-center justify-center min-h-[38px] min-w-[38px] p-2 text-xs font-semibold rounded bg-ribbon text-white hover:bg-ribbon-dark transition-colors shadow-paper"
-                title="Log out"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-              </button>
-            </form>
           </div>
-        </div>
-      </header>
+        </header>
 
-      {/* Main List of Categories */}
-      <main className="p-3 sm:p-5 space-y-4">
-        <div className="flex items-center justify-between pb-1">
-          <div className="flex items-center gap-2">
-            <Layers className="w-4 h-4 text-ribbon" />
-            <h2 className="font-serif text-base sm:text-lg font-bold text-indigo-deep">
-              Categories ({menu.sections.length})
-            </h2>
-          </div>
-          <button
-            type="button"
-            onClick={() => setIsAddingCategory(true)}
-            className="inline-flex items-center gap-1.5 min-h-[38px] px-3 py-1 text-xs font-semibold rounded bg-indigo text-white hover:bg-indigo-deep transition-colors shadow-paper"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>New Category</span>
-          </button>
-        </div>
+        {/* Content Pane (Full width with 24 to 32px padding, max-w-[1600px] on ultra-wide) */}
+        <main className="flex-1 w-full max-w-[1600px] mx-auto p-4 sm:p-6 lg:p-8">
+          {activeTab === "overview" && (
+            <AdminDashboardOverview
+              menu={menu}
+              saveStatus={saveStatus}
+              onNavigateTab={handleSelectTab}
+              onDownloadExcel={handleDownloadExcel}
+              onTriggerUploadExcel={() => excelFileInputRef.current?.click()}
+            />
+          )}
 
-        {/* Add Category Form Modal */}
-        {isAddingCategory && (
-          <form
-            onSubmit={handleCreateCategory}
-            className="p-4 rounded-lg border-2 border-indigo/30 bg-cream-50 space-y-3 shadow-paper"
-          >
-            <div className="text-xs font-bold uppercase tracking-wider text-indigo-deep">
-              Add New Category
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <input
-                type="text"
-                value={newCatEn}
-                onChange={(e) => setNewCatEn(e.target.value)}
-                placeholder="Category Name in English * (e.g. Desserts)"
-                required
-                autoFocus
-                className="min-h-[38px] px-2.5 py-1 text-sm bg-cream-100/60 border border-cream-300 rounded focus:ring-2 focus:ring-ribbon"
-              />
-              <input
-                type="text"
-                value={newCatGu}
-                onChange={(e) => setNewCatGu(e.target.value)}
-                placeholder="Category Name in Gujarati (e.g. મીઠાઈ)"
-                className="min-h-[38px] px-2.5 py-1 text-sm font-gujarati bg-cream-100/60 border border-cream-300 rounded focus:ring-2 focus:ring-ribbon"
-              />
-            </div>
-            <div className="flex items-center justify-end gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => setIsAddingCategory(false)}
-                className="min-h-[36px] px-3 py-1 text-xs font-semibold rounded bg-cream-200 text-indigo hover:bg-cream-300"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={!newCatEn.trim()}
-                className="min-h-[36px] inline-flex items-center gap-1.5 px-4 py-1 text-xs font-semibold rounded bg-ribbon text-white hover:bg-ribbon-dark disabled:opacity-50"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Create Category</span>
-              </button>
-            </div>
-          </form>
-        )}
+          {activeTab === "items" && (
+            <AdminItemsTable
+              categories={menu.sections}
+              searchQuery={searchQuery}
+              onUpdateItem={handleUpdateItem}
+              onDeleteItem={handleDeleteItem}
+              onMoveItem={handleMoveItem}
+              onOpenItemDrawer={handleOpenItemDrawer}
+            />
+          )}
 
-        <div className="space-y-3">
-          {menu.sections.map((category, idx) => (
-            <CategoryPanel
-              key={category.id}
-              category={category}
-              allCategories={menu.sections}
-              isFirst={idx === 0}
-              isLast={idx === menu.sections.length - 1}
+          {activeTab === "categories" && (
+            <AdminCategoriesView
+              categories={menu.sections}
               onUpdateCategory={handleUpdateCategory}
-              onMoveItemToCategory={handleMoveItemToCategory}
-              onMoveCategoryUp={() => handleMoveCategoryUp(idx)}
-              onMoveCategoryDown={() => handleMoveCategoryDown(idx)}
+              onMoveCategoryUp={handleMoveCategoryUp}
+              onMoveCategoryDown={handleMoveCategoryDown}
               onDeleteCategory={handleDeleteCategory}
+              onCreateCategory={handleCreateCategory}
             />
-          ))}
-        </div>
+          )}
 
-        {/* Menu QR Code & Table Tents Suite */}
-        <MenuQrCard
-          restaurantName={menu.restaurant.name}
-          guRestaurantName={menu.restaurant.guName}
-        />
+          {activeTab === "bulk-price" && (
+            <AdminBulkPriceView
+              categories={menu.sections}
+              onApplyBulkPrice={handleApplyBulkPrice}
+            />
+          )}
 
-        {/* Excel Spreadsheet & Reset Tools */}
-        <div className="mt-8 p-4 sm:p-5 rounded-xl border-2 border-cream-300 bg-cream-50 space-y-4 shadow-paper">
-          <div className="flex items-center justify-between border-b border-cream-200 pb-2">
-            <div>
-              <div className="flex items-center gap-2">
-                <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
-                <h3 className="font-serif font-bold text-sm sm:text-base text-indigo-deep">
-                  Excel Spreadsheet & Reset Tools
-                </h3>
-              </div>
-              <p className="text-[11px] text-indigo-muted mt-0.5">
-                Download the complete menu as an Excel workbook, upload updated spreadsheets, or reset to original menu.
-              </p>
+          {activeTab === "qr" && (
+            <div id="menu-qr-card">
+              <MenuQrCard
+                restaurantName={menu.restaurant.name}
+                guRestaurantName={menu.restaurant.guName}
+              />
             </div>
-          </div>
+          )}
 
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Download Excel */}
-            <button
-              type="button"
-              onClick={handleDownloadExcel}
-              className="inline-flex items-center gap-2 min-h-[40px] px-4 py-2 text-xs font-semibold rounded-lg bg-cream-200 hover:bg-cream-300 border border-cream-300 text-indigo transition-colors shadow-xs"
-              title="Download entire menu as Excel spreadsheet (.xlsx)"
-            >
-              <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
-              <span>Download Excel</span>
-            </button>
-
-            {/* Upload Excel */}
-            <input
-              ref={excelFileInputRef}
-              type="file"
-              accept=".xlsx"
-              onChange={handleUploadExcel}
-              className="hidden"
+          {activeTab === "backup" && (
+            <AdminBackupExcelView
+              onDownloadExcel={handleDownloadExcel}
+              onUploadExcel={handleUploadExcel}
+              isExcelUploading={isExcelUploading}
+              onOpenResetDialog={() => setIsResetDialogOpen(true)}
             />
-            <button
-              type="button"
-              onClick={() => excelFileInputRef.current?.click()}
-              disabled={isExcelUploading}
-              className="inline-flex items-center gap-2 min-h-[40px] px-4 py-2 text-xs font-semibold rounded-lg bg-indigo text-white hover:bg-indigo-deep transition-colors shadow-paper disabled:opacity-50"
-              title="Upload modified Excel spreadsheet (.xlsx)"
-            >
-              <Upload className="w-4 h-4" />
-              <span>{isExcelUploading ? "Analyzing Excel..." : "Upload Excel"}</span>
-            </button>
+          )}
+        </main>
+      </div>
 
-            {/* Reset Factory Menu */}
-            <button
-              type="button"
-              onClick={() => setIsResetDialogOpen(true)}
-              className="inline-flex items-center gap-1.5 min-h-[40px] px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-ribbon/10 hover:bg-ribbon/20 border border-ribbon/30 text-ribbon-dark transition-colors ml-auto"
-            >
-              <RotateCcw className="w-3.5 h-3.5 text-ribbon" />
-              <span>Reset to Original Menu</span>
-            </button>
-          </div>
-        </div>
-      </main>
+      {/* Hidden File Input for Excel Upload */}
+      <input
+        ref={excelFileInputRef}
+        type="file"
+        accept=".xlsx"
+        onChange={handleUploadExcel}
+        className="hidden"
+      />
+
+      {/* 480px Item Drawer (Add / Edit item without stretching) */}
+      <AdminItemDrawer
+        isOpen={isItemDrawerOpen}
+        onClose={() => setIsItemDrawerOpen(false)}
+        item={drawerItem}
+        currentCategory={drawerCategory}
+        allCategories={menu.sections}
+        onSave={handleSaveItemDrawer}
+      />
+
+      {/* Excel Import Preview & Validation Modal */}
+      <ExcelImportModal
+        isOpen={isExcelModalOpen}
+        onClose={() => setIsExcelModalOpen(false)}
+        fileName={excelFileName}
+        errors={excelErrors}
+        summary={excelSummary}
+        parsedMenu={excelParsedMenu}
+        onApplySuccess={(newMenu) => {
+          setMenu(newMenu);
+          alert("Menu successfully updated from Excel! A safety snapshot was recorded in History.");
+        }}
+      />
 
       {/* Reset Confirmation Dialog */}
       {isResetDialogOpen && (
@@ -538,27 +608,6 @@ export function AdminDashboard({ initialMenu }: AdminDashboardProps) {
           </div>
         </div>
       )}
-
-      {/* QR Code Generator & Print Modal */}
-      <QrManagerModal
-        isOpen={isQrModalOpen}
-        onClose={() => setIsQrModalOpen(false)}
-        initialTable={quickPrintTable}
-      />
-
-      {/* Excel Import Preview & Validation Modal */}
-      <ExcelImportModal
-        isOpen={isExcelModalOpen}
-        onClose={() => setIsExcelModalOpen(false)}
-        fileName={excelFileName}
-        errors={excelErrors}
-        summary={excelSummary}
-        parsedMenu={excelParsedMenu}
-        onApplySuccess={(newMenu) => {
-          setMenu(newMenu);
-          alert("Menu successfully updated from Excel! A safety snapshot was recorded in History.");
-        }}
-      />
     </div>
   );
 }
