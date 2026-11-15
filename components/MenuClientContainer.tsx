@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { MenuData, Section, Item } from "@/types/menu";
-import { MENU_GROUPS, MenuGroup, getDefaultGroupForSection } from "@/lib/groups";
+import { MENU_GROUPS, MenuGroup, ALL_GROUP, getDefaultGroupForSection } from "@/lib/groups";
 import { Header } from "./Header";
 import { Footer } from "./Footer";
 import { MenuSection } from "./MenuSection";
@@ -28,7 +28,7 @@ export function MenuClientContainer({
   const [lang, setLang] = useState<LanguageMode>("en");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
-  const [selectedGroupId, setSelectedGroupId] = useState<string>("south-indian");
+  const [selectedGroupId, setSelectedGroupId] = useState<string>("all");
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
   const [showBackToTop, setShowBackToTop] = useState<boolean>(false);
 
@@ -90,10 +90,25 @@ export function MenuClientContainer({
     [allSections]
   );
 
+  // Category navigation tabs: All dishes first, followed by active individual groups
+  const categoryTabs = useMemo<MenuGroup[]>(
+    () => [ALL_GROUP, ...activeGroups],
+    [activeGroups]
+  );
+
   const currentGroupIndex = activeGroups.findIndex((g) => g.id === selectedGroupId);
-  const prevGroup = currentGroupIndex > 0 ? activeGroups[currentGroupIndex - 1] : null;
+  const prevGroup =
+    selectedGroupId === "all"
+      ? null
+      : currentGroupIndex === 0
+      ? ALL_GROUP
+      : currentGroupIndex > 0
+      ? activeGroups[currentGroupIndex - 1]
+      : null;
   const nextGroup =
-    currentGroupIndex !== -1 && currentGroupIndex < activeGroups.length - 1
+    selectedGroupId === "all"
+      ? activeGroups[0]
+      : currentGroupIndex !== -1 && currentGroupIndex < activeGroups.length - 1
       ? activeGroups[currentGroupIndex + 1]
       : null;
 
@@ -101,7 +116,9 @@ export function MenuClientContainer({
   useEffect(() => {
     const handleHash = () => {
       const hash = window.location.hash.replace(/^#/, "");
-      if (hash && activeGroups.some((g) => g.id === hash)) {
+      if (hash === "all") {
+        setSelectedGroupId("all");
+      } else if (hash && activeGroups.some((g) => g.id === hash)) {
         setSelectedGroupId(hash);
       }
     };
@@ -149,12 +166,14 @@ export function MenuClientContainer({
     });
   };
 
-  // Sections in the currently selected group
+  // Sections in the currently selected group (or all sections if 'all' is selected)
   const displayedSections = useMemo(
     () =>
-      allSections.filter(
-        (sec) => (sec.group || "south-indian") === selectedGroupId
-      ),
+      selectedGroupId === "all"
+        ? allSections
+        : allSections.filter(
+            (sec) => (sec.group || "south-indian") === selectedGroupId
+          ),
     [allSections, selectedGroupId]
   );
 
@@ -171,9 +190,17 @@ export function MenuClientContainer({
     return result;
   }, [displayedSections]);
 
-  // Default open state: first section of group is open, others collapsed
+  // Default open state:
+  // In 'all' mode, all sections are expanded by default so everything is shown
+  // In specific group mode, first section is open and others collapsed
   useEffect(() => {
-    if (displayedSections.length > 0) {
+    if (selectedGroupId === "all") {
+      const allOpen: Record<string, boolean> = {};
+      allSections.forEach((sec) => {
+        allOpen[sec.id] = true;
+      });
+      setOpenSections(allOpen);
+    } else if (displayedSections.length > 0) {
       setOpenSections((prev) => {
         const updated: Record<string, boolean> = { ...prev };
         displayedSections.forEach((sec, idx) => {
@@ -184,39 +211,45 @@ export function MenuClientContainer({
         return updated;
       });
     }
-  }, [displayedSections]);
+  }, [selectedGroupId, allSections, displayedSections]);
 
   // Check if all displayed sections are currently expanded
   const areAllOpen = useMemo(() => {
     if (displayedSections.length === 0) return false;
-    return displayedSections.every((s, idx) => openSections[s.id] ?? (idx === 0));
-  }, [displayedSections, openSections]);
+    return displayedSections.every(
+      (s, idx) => openSections[s.id] ?? (selectedGroupId === "all" || idx === 0)
+    );
+  }, [displayedSections, openSections, selectedGroupId]);
 
   const handleToggleAll = () => {
     const nextState = !areAllOpen;
-    setOpenSections((prev) => {
-      const updated = { ...prev };
-      displayedSections.forEach((sec) => {
-        updated[sec.id] = nextState;
-      });
-      return updated;
+    const updated: Record<string, boolean> = {};
+    displayedSections.forEach((sec) => {
+      updated[sec.id] = nextState;
     });
+    setOpenSections(updated);
   };
 
-  // Accordion toggle: opening one closes others (unless all were expanded), and scrolls to header
+  // Accordion toggle: in 'all' mode, toggles section without collapsing others; in single category, closes others
   const handleToggleSection = (sectionId: string) => {
     const isCurrentlyOpen =
-      openSections[sectionId] ?? (sectionId === displayedSections[0]?.id);
+      openSections[sectionId] ?? (selectedGroupId === "all" || sectionId === displayedSections[0]?.id);
 
     if (!isCurrentlyOpen) {
-      // Opening section: close others in accordion fashion
-      setOpenSections({ [sectionId]: true });
+      if (selectedGroupId === "all") {
+        setOpenSections((prev) => ({
+          ...prev,
+          [sectionId]: true,
+        }));
+      } else {
+        setOpenSections({ [sectionId]: true });
+      }
 
-      // Smooth scroll to section just below sticky top bar (56px)
+      // Smooth scroll to section just below sticky top bar (headerOffset: 96)
       requestAnimationFrame(() => {
         const el = document.getElementById(sectionId);
         if (el) {
-          const headerOffset = 64;
+          const headerOffset = 96;
           const elementPosition = el.getBoundingClientRect().top;
           const offsetPosition =
             elementPosition + window.pageYOffset - headerOffset;
@@ -251,19 +284,27 @@ export function MenuClientContainer({
 
       setSelectedGroupId(groupId);
 
-      // Reset accordion state for new group: first section open
-      const firstSection = allSections.find(
-        (s) => (s.group || "south-indian") === groupId
-      );
-      if (firstSection) {
-        setOpenSections({ [firstSection.id]: true });
+      // Reset accordion state for new group: all open for 'all', first section for specific category
+      if (groupId === "all") {
+        const allOpen: Record<string, boolean> = {};
+        allSections.forEach((s) => {
+          allOpen[s.id] = true;
+        });
+        setOpenSections(allOpen);
+      } else {
+        const firstSection = allSections.find(
+          (s) => (s.group || "south-indian") === groupId
+        );
+        if (firstSection) {
+          setOpenSections({ [firstSection.id]: true });
+        }
       }
 
       // Scroll to start of menu
       requestAnimationFrame(() => {
         const menuEl = document.getElementById("main-menu");
         if (menuEl) {
-          const headerOffset = 64;
+          const headerOffset = 96;
           const elementPosition = menuEl.getBoundingClientRect().top;
           const offsetPosition =
             elementPosition + window.pageYOffset - headerOffset;
@@ -313,37 +354,52 @@ export function MenuClientContainer({
         {isGu ? "મુખ્ય મેનુ પર જાઓ" : "Skip to main menu"}
       </a>
 
-      {/* ONE Compact Sticky Bar (~56px high) */}
-      <header className="sticky top-0 z-40 w-full h-14 bg-cream-100 border-b border-cream-300 px-2 sm:px-4 flex items-center justify-between gap-2 shadow-xs">
-        {/* Left: Compact Search Icon Button */}
-        <button
-          type="button"
-          onClick={() => setIsSearchOpen(true)}
-          aria-label={isGu ? "વાનગી શોધો" : "Search dishes"}
-          className="inline-flex items-center gap-1.5 min-h-[44px] px-3 py-1.5 rounded-full text-xs font-semibold bg-cream-50 hover:bg-cream-200 text-indigo border border-cream-300 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ribbon shrink-0 select-none"
-        >
-          <Search className="w-4 h-4 text-indigo" />
-          <span className="hidden xs:inline sm:inline">
-            {isGu ? "શોધો" : "Search"}
-          </span>
-        </button>
+      {/* 1. Restaurant Cover Header (Chef mascot, Restaurant name, Tagline, Table badge) */}
+      <Header
+        restaurant={initialMenu.restaurant}
+        lang={uiLang}
+        tableNumber={tableNumber}
+      />
 
-        {/* Middle: Horizontally scrolling group tabs with fade on right edge */}
-        <div className="flex-1 min-w-0 h-full flex items-center relative overflow-hidden">
+      {/* 2. Sticky Navigation Bar (Categories are below header) */}
+      <div className="sticky top-0 z-40 w-full bg-cream-100 border-b border-cream-300 shadow-paper select-none">
+        {/* Row 1: Search Button (left) and Language Toggle (right) */}
+        <div className="w-full px-3 sm:px-4 pt-2.5 pb-1.5 flex items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={() => setIsSearchOpen(true)}
+            aria-label={isGu ? "વાનગી શોધો" : "Search dishes"}
+            className="inline-flex items-center gap-2 min-h-[40px] px-3.5 py-1.5 rounded-full text-xs font-semibold bg-cream-50 hover:bg-cream-200 text-indigo border border-cream-300 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ribbon shrink-0 shadow-2xs"
+          >
+            <Search className="w-4 h-4 text-indigo" />
+            <span className="hidden xs:inline sm:inline">
+              {isGu ? "વાનગી શોધો..." : "Search dishes..."}
+            </span>
+            <span className="xs:hidden sm:hidden">
+              {isGu ? "શોધો" : "Search"}
+            </span>
+          </button>
+
+          <div className="flex-none shrink-0 flex items-center">
+            <LanguageToggle currentLang={lang} onToggle={handleLanguageChange} />
+          </div>
+        </div>
+
+        {/* Row 2: Categories scrolling horizontally, starting with All */}
+        <div className="w-full px-3 sm:px-4 pb-2.5 pt-0.5 relative overflow-hidden">
           <nav
             ref={groupTabsNavRef}
             aria-label={isGu ? "વાનગી શ્રેણીઓ" : "Menu Categories"}
-            className="w-full flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1 fade-right-edge pr-3"
+            className="w-full flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 fade-right-edge pr-3 select-none"
           >
-            {activeGroups.map((group: MenuGroup) => {
+            {categoryTabs.map((group) => {
               const isActive = group.id === selectedGroupId;
-              const groupSections = allSections.filter(
-                (sec) => (sec.group || "south-indian") === group.id
-              );
-              const itemCount = groupSections.reduce(
-                (acc, sec) => acc + (sec.items?.length || 0),
-                0
-              );
+              const isAll = group.id === "all";
+              const itemCount = isAll
+                ? allSections.reduce((acc, sec) => acc + (sec.items?.length || 0), 0)
+                : allSections
+                    .filter((sec) => (sec.group || "south-indian") === group.id)
+                    .reduce((acc, sec) => acc + (sec.items?.length || 0), 0);
 
               return (
                 <button
@@ -351,7 +407,7 @@ export function MenuClientContainer({
                   data-group-id={group.id}
                   type="button"
                   onClick={() => handleGroupSelect(group.id)}
-                  className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs sm:text-sm min-h-[44px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ribbon select-none ${
+                  className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs sm:text-sm min-h-[40px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ribbon select-none ${
                     isActive
                       ? "bg-indigo-deep text-cream-50 font-bold border border-indigo-deep shadow-none"
                       : "bg-cream-50 hover:bg-cream-200 text-indigo font-medium border border-cream-300 shadow-none"
@@ -378,12 +434,7 @@ export function MenuClientContainer({
             })}
           </nav>
         </div>
-
-        {/* Right: Language Toggle */}
-        <div className="flex-none shrink-0 flex items-center">
-          <LanguageToggle currentLang={lang} onToggle={handleLanguageChange} />
-        </div>
-      </header>
+      </div>
 
       {/* Full-width Search Bar Overlay Component */}
       <MenuSearch
@@ -396,30 +447,22 @@ export function MenuClientContainer({
         onSelectResult={handleSelectSearchResult}
       />
 
-      {/* Menu Cover Header (under 220px tall on phones) */}
-      <Header
-        restaurant={initialMenu.restaurant}
-        lang={uiLang}
-        tableNumber={tableNumber}
-      />
-
       {/* Main Content Layout (Desktop: Left rail at >=1100px) */}
       <div className="flex-1 flex w-full min-w-0">
         {/* Desktop Left Rail (screens >= 1100px) */}
-        <aside className="hidden min-[1100px]:block w-64 shrink-0 p-4 border-r border-cream-300 bg-cream-50/60 sticky top-14 self-start max-h-[calc(100dvh-56px)] overflow-y-auto no-scrollbar">
+        <aside className="hidden min-[1100px]:block w-64 shrink-0 p-4 border-r border-cream-300 bg-cream-50/60 sticky top-24 self-start max-h-[calc(100dvh-96px)] overflow-y-auto no-scrollbar">
           <h3 className="font-serif font-bold text-xs uppercase tracking-wider text-indigo-muted mb-3 px-2">
             {isGu ? "વાનગી શ્રેણીઓ" : "Menu Categories"}
           </h3>
           <nav className="space-y-1">
-            {activeGroups.map((group) => {
+            {categoryTabs.map((group) => {
               const isActive = group.id === selectedGroupId;
-              const groupSections = allSections.filter(
-                (sec) => (sec.group || "south-indian") === group.id
-              );
-              const itemCount = groupSections.reduce(
-                (acc, sec) => acc + (sec.items?.length || 0),
-                0
-              );
+              const isAll = group.id === "all";
+              const itemCount = isAll
+                ? allSections.reduce((acc, sec) => acc + (sec.items?.length || 0), 0)
+                : allSections
+                    .filter((sec) => (sec.group || "south-indian") === group.id)
+                    .reduce((acc, sec) => acc + (sec.items?.length || 0), 0);
 
               return (
                 <button

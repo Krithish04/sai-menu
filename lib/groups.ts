@@ -6,6 +6,12 @@ export interface MenuGroup {
   gu: string;
 }
 
+export const ALL_GROUP: MenuGroup = {
+  id: "all",
+  en: "All",
+  gu: "બધું",
+};
+
 export const MENU_GROUPS: MenuGroup[] = [
   { id: "south-indian", en: "South Indian", gu: "સાઉથ ઇન્ડિયન" },
   { id: "pav-bhaji-pulav", en: "Pav Bhaji & Pulav", gu: "પાંવ ભાજી અને પુલાવ" },

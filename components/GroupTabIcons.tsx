@@ -169,8 +169,34 @@ export function GlassIcon({ className = "w-4 h-4", size = 18 }: IconProps) {
   );
 }
 
+// 7. All Menu: 2x2 grid representing all dishes and categories
+export function AllMenuIcon({ className = "w-4 h-4", size = 18 }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <rect x="3" y="3" width="5.5" height="5.5" rx="1" />
+      <rect x="11.5" y="3" width="5.5" height="5.5" rx="1" />
+      <rect x="3" y="11.5" width="5.5" height="5.5" rx="1" />
+      <rect x="11.5" y="11.5" width="5.5" height="5.5" rx="1" />
+    </svg>
+  );
+}
+
 export function getGroupTabIcon(groupId: string, className = "w-4 h-4") {
   const id = groupId.toLowerCase();
+  if (id === "all") {
+    return <AllMenuIcon className={className} />;
+  }
   if (id.includes("south-indian") || id.includes("dosa")) {
     return <DosaIcon className={className} />;
   }

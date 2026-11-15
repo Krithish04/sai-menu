@@ -73,7 +73,7 @@ export function MenuSection({
     <section
       id={section.id}
       data-section-id={section.id}
-      className="scroll-mt-16 rounded-md border border-cream-300 bg-cream-50 overflow-hidden shadow-paper transition-all duration-200"
+      className="scroll-mt-28 rounded-md border border-cream-300 bg-cream-50 overflow-hidden shadow-paper transition-all duration-200"
     >
       {/* Accordion Section Header */}
       <div
